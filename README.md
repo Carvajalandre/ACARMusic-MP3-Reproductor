@@ -1,3 +1,4 @@
+Esta aplicación opera de forma puramente local. Solicita acceso al almacenamiento/archivos multimedia del dispositivo únicamente para reproducir tu música y no recopila, almacena ni comparte ningún tipo de dato personal.
 ## Descargar App
 Puedes descargar la última versión del APK directamente desde el siguiente enlace:
 [Descargar APK (Última versión)](https://github.com/Carvajalandre/ACARMusic/releases/latest)
