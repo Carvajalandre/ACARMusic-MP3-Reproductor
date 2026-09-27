@@ -61,6 +61,10 @@ class VisualizerPlugin(
     // Un solo intento. Sin retry — Samsung DSP bloquea permanente, no transitorio.
     private fun startVisualizer(sessionId: Int): Boolean {
         stopVisualizer()
+        // Resetear AGC al cambiar de pista: si no, una canción fuerte deja
+        // runningMax alto y la siguiente canción suave se ve plana (sin ritmo).
+        runningMax = 1.0
+        for (i in fftBuffer.indices) fftBuffer[i] = 0f
         return try {
             val viz = Visualizer(sessionId)
             viz.enabled = false
@@ -97,13 +101,15 @@ class VisualizerPlugin(
             mags[i] = magnitude
             if (magnitude > frameMax) frameMax = magnitude
         }
-        if (frameMax < 1.6) {
+        if (frameMax < 1.0) {
             for (i in 0 until n) fftBuffer[i] = 0f
             eventSink?.success(fftBuffer.toList().subList(0, n))
             return
         }
-        runningMax = if (frameMax > runningMax) frameMax else runningMax * 0.94
-        val gainRef = runningMax.coerceAtLeast(4.0)
+        // Ataque instantáneo, release rápido: seguir el beat sin pumping.
+        // Antes 0.94 + piso 4.0 aplanaba pasajes suaves y daba lag.
+        runningMax = if (frameMax > runningMax) frameMax else runningMax * 0.96 + frameMax * 0.04
+        val gainRef = runningMax.coerceAtLeast(2.5)
         for (i in 0 until n) {
             val start = ((i.toDouble() / n) * sourceBins).toInt().coerceIn(0, sourceBins - 1)
             val end = ((((i + 1).toDouble() / n) * sourceBins).toInt() + 1).coerceIn(start + 1, sourceBins)

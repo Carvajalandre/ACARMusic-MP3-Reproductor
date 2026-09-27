@@ -112,39 +112,40 @@ class VisualizerService {
   void _startSimulated() {
     final rng = Random();
     double time = 0.0;
-    const dt = 0.08;
+    // Simulado con pulso de beat (~128 BPM) para que radial/barras
+    // se muevan al ritmo aunque el Visualizer nativo no esté disponible
+    // (emulador, Samsung DSP bloqueado). Antes eran senos lentos de ~8s.
+    const dt = 0.05;
+    const beatFreq = 2.13; // 128 BPM
 
     _simulatedTimer?.cancel();
-    _simulatedTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+    _simulatedTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!_started || _controller.isClosed) return;
       if (!_playbackActive) {
         _controller.add(_silenceFrame);
         return;
       }
       time += dt;
+      // Envolvente de kick: pulso corto con decaimiento rápido.
+      final phase = (time * beatFreq) % 1.0;
+      final kick = pow(1.0 - phase, 2.2).toDouble();
+      final hatPhase = (time * beatFreq * 2) % 1.0;
+      final hat = pow(1.0 - hatPhase, 3.0).toDouble() * 0.5;
       final data = List<double>.generate(64, (i) {
         final freqRatio = i / 64;
         double value;
         if (freqRatio < 0.2) {
-          value = (0.4 +
-                  sin(time * 0.8) * 0.25 +
-                  sin(time * 1.3) * 0.1 +
-                  rng.nextDouble() * 0.15)
-              .clamp(0.1, 1.0);
+          // Graves siguen el kick.
+          value = (0.15 + kick * 0.75 + rng.nextDouble() * 0.1)
+              .clamp(0.05, 1.0);
         } else if (freqRatio > 0.7) {
-          final spikes =
-              rng.nextDouble() > 0.92 ? rng.nextDouble() * 0.45 : 0.0;
-          value = (0.1 +
-                  sin(time * 1.5) * 0.08 +
-                  sin(time * 2.1) * 0.05 +
-                  spikes +
-                  rng.nextDouble() * 0.25)
+          value = (0.08 + hat * 0.5 + rng.nextDouble() * 0.18)
               .clamp(0.05, 1.0);
         } else {
-          value = (0.2 +
-                  sin(time * 1.1) * 0.15 +
-                  sin(time * 0.7) * 0.1 +
-                  rng.nextDouble() * 0.2)
+          value = (0.12 +
+                  kick * 0.3 +
+                  sin(time * 3.1 + i * 0.4) * 0.08 +
+                  rng.nextDouble() * 0.15)
               .clamp(0.05, 1.0);
         }
         return value;

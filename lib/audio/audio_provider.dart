@@ -282,7 +282,7 @@ class AudioProvider extends ChangeNotifier with WidgetsBindingObserver {
         await _player.pause();
         _handler.refreshPlaybackState();
       } else {
-        _player.play();
+        await _player.play();
         _handler.refreshPlaybackState();
       }
       _manageVisualizer();

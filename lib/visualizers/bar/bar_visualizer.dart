@@ -28,7 +28,9 @@ class _BarVisualizerState extends State<BarVisualizer> {
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
+    // 60fps: el nativo entrega ~30fps, interpolar a 60fps reduce el lag
+    // percibido sin añadir inercia extra.
+    _ticker = Timer.periodic(const Duration(milliseconds: 16), (_) => _tick());
     _subscription = widget.fftStream.listen(_processFftData);
   }
 
@@ -60,9 +62,11 @@ class _BarVisualizerState extends State<BarVisualizer> {
       final isVocalBand = i >= 5 && i <= 11;
       final groupEnergy = isVocalBand ? _vocalEnergy : _instrumentEnergy;
       final directBand = mapped[i];
+      // Pesos bajos para el grupo: antes (0.78+0.42 / 0.88+0.20) saturaba
+      // todo a 1.0 y mataba la dinámica (no se veía el ritmo).
       _targets[i] = (isVocalBand
-              ? directBand * .78 + groupEnergy * .42
-              : directBand * .88 + groupEnergy * .20)
+              ? directBand * .85 + groupEnergy * .15
+              : directBand * .9 + groupEnergy * .1)
           .clamp(0.0, 1.0);
     }
   }
@@ -109,23 +113,27 @@ class _BarVisualizerState extends State<BarVisualizer> {
         sum += value;
       }
       final avg = sum / (end - start);
-      final shaped = pow((peak * 0.6 + avg * 0.4).clamp(0.0, 1.0), 0.5);
-      output[i] = (shaped * 2.2).clamp(0.0, 1.0).toDouble();
+      // Antes: pow(..., 0.5) * 2.2 → saturaba a 1.0 con señal media
+      // (0.3 → 0.547*2.2 = 1.2 → clamp). Sin dinámica no hay ritmo.
+      // Ahora: gamma 0.68 + ganancia 1.25 preserva transitorios.
+      final shaped = pow((peak * 0.75 + avg * 0.25).clamp(0.0, 1.0), 0.68);
+      output[i] = (shaped * 1.25).clamp(0.0, 1.0).toDouble();
     }
     return output;
   }
 
   void _tick() {
     if (!mounted) return;
-    final energy = (_instrumentEnergy + _vocalEnergy) / 2;
-
     var changed = false;
     for (var i = 0; i < _columnCount; i++) {
       final target = _targets[i];
-      final speed = target > _levels[i] ? 0.56 : (energy < 0.02 ? 0.46 : 0.24);
+      // Ataque casi instantáneo para seguir el golpe (kick/snare),
+      // release medio para caer al ritmo sin cola fantasma.
+      // Antes: attack 0.56 / release 0.24 a 30fps = ~150ms de lag.
+      final speed = target > _levels[i] ? 0.85 : 0.38;
       final next = (_levels[i] + (target - _levels[i]) * speed).clamp(0.0, 1.0);
-      if ((next - _levels[i]).abs() > 0.001) changed = true;
-      _levels[i] = energy < 0.01 ? next * 0.58 : next;
+      if ((next - _levels[i]).abs() > 0.0008) changed = true;
+      _levels[i] = next;
     }
     if (changed) setState(() {});
   }

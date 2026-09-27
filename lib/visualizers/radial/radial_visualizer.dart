@@ -33,7 +33,8 @@ class _RadialVisualizerState extends State<RadialVisualizer> {
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
+    // 60fps para seguir el transitorio sin lag perceptible.
+    _ticker = Timer.periodic(const Duration(milliseconds: 16), (_) => _tick());
     _subscription = widget.fftStream.listen(_processFftData);
   }
 
@@ -92,19 +93,16 @@ class _RadialVisualizerState extends State<RadialVisualizer> {
 
   void _tick() {
     if (!mounted) return;
-    var energy = 0.0;
-    for (final target in _targets) {
-      energy += target;
-    }
-    energy /= _targets.length;
-
     var changed = false;
     for (var i = 0; i < _barCount; i++) {
       final target = _targets[i];
-      final speed = target > _levels[i] ? 0.58 : (energy < 0.02 ? 0.42 : 0.28);
+      // Ataque rápido (sigue kick/snare), release medio (cae al ritmo).
+      // Antes: attack 0.58 / release 0.28 + gating energy*0.42 que
+      // aplastaba los transitorios y daba sensación de ir desfasado.
+      final speed = target > _levels[i] ? 0.82 : 0.38;
       final next = (_levels[i] + (target - _levels[i]) * speed).clamp(0.0, 1.0);
-      if ((next - _levels[i]).abs() > 0.001) changed = true;
-      _levels[i] = energy < 0.01 ? next * 0.42 : next;
+      if ((next - _levels[i]).abs() > 0.0008) changed = true;
+      _levels[i] = next;
     }
     if (changed) setState(() {});
   }
