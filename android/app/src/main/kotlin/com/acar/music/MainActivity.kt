@@ -12,6 +12,7 @@ class MainActivity : AudioServiceFragmentActivity() {
 
     private val CHANNEL = "com.acar.music/equalizer"
     lateinit var visualizerPlugin: VisualizerPlugin
+    lateinit var offlineFftPlugin: OfflineFftPlugin
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -40,11 +41,15 @@ class MainActivity : AudioServiceFragmentActivity() {
             }
 
         visualizerPlugin = VisualizerPlugin(WeakReference(this), flutterEngine)
+        offlineFftPlugin = OfflineFftPlugin(flutterEngine)
     }
 
     override fun onDestroy() {
         if (::visualizerPlugin.isInitialized) {
             visualizerPlugin.destroy()
+        }
+        if (::offlineFftPlugin.isInitialized) {
+            offlineFftPlugin.destroy()
         }
         super.onDestroy()
     }

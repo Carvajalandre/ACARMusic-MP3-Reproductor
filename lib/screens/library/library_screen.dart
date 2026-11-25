@@ -18,7 +18,10 @@ class _LibraryScreenState extends State<LibraryScreen>
   late TabController _tabController;
   final ScrollController _tracksScrollCtrl = ScrollController();
   Map<String, int> _letterIndex = {};
-  static const double _tileHeight = 86.0;
+  int _lastTabIndex = 0;
+  // Misma altura que TrackTile: con itemExtent fijo el contenido queda
+  // perfectamente centrado en la fila.
+  static const double _tileHeight = TrackTile.height;
 
   String? _activeLetter;
   bool _showLetterOverlay = false;
@@ -28,7 +31,15 @@ class _LibraryScreenState extends State<LibraryScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() => setState(() {}));
+    _tabController.addListener(() {
+      // addListener también dispara en cada frame del swipe: solo rebuildar
+      // cuando cambia el índice seleccionado.
+      if (_tabController.indexIsChanging) return;
+      if (_tabController.index != _lastTabIndex) {
+        _lastTabIndex = _tabController.index;
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -41,7 +52,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   void _buildLetterIndex(List<SongModel> songs) {
     _letterIndex = {};
     for (int i = 0; i < songs.length; i++) {
-      final raw = songs[i].title ?? '';
+      final raw = songs[i].title;
       final letter = raw.isEmpty ? '#' : raw[0].toUpperCase();
       final key = RegExp(r'[A-Z]').hasMatch(letter) ? letter : '#';
       _letterIndex.putIfAbsent(key, () => i);
@@ -126,10 +137,6 @@ class _LibraryScreenState extends State<LibraryScreen>
                             ]),
                           ),
                         ),
-                      IconButton(
-                          onPressed: () {},
-                          icon: const Icon(Icons.more_vert_rounded,
-                              color: AppTheme.onSurfaceVariant)),
                     ],
                   ),
                 ),
@@ -387,7 +394,7 @@ class _LibraryScreenState extends State<LibraryScreen>
               ),
             ),
             const SizedBox(height: 6),
-            Text(album.album ?? 'Álbum desconocido',
+            Text(album.album,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.manrope(
@@ -453,7 +460,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                       ),
               ),
             ),
-            title: Text(artist.artist ?? 'Artista desconocido',
+            title: Text(artist.artist,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.manrope(
@@ -480,11 +487,12 @@ class _LibraryScreenState extends State<LibraryScreen>
   Widget _buildFoldersTab(LibraryProvider library) {
     final Map<String, List<SongModel>> folders = {};
     for (final song in library.songs) {
-      final path = song.data ?? '';
+      final path = song.data;
       final folder = path.contains('/')
           ? path.substring(0, path.lastIndexOf('/'))
-          : 'Unknown';
-      folders.putIfAbsent(folder.split('/').last, () => []).add(song);
+          : 'Desconocida';
+      // Clave = ruta completa para no fusionar carpetas con el mismo nombre.
+      folders.putIfAbsent(folder, () => []).add(song);
     }
     if (folders.isEmpty) {
       return _buildEmpty('No se encontraron carpetas', Icons.folder_rounded);
@@ -507,7 +515,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                 borderRadius: BorderRadius.circular(10)),
             child: const Icon(Icons.folder_rounded, color: AppTheme.primary),
           ),
-          title: Text(key,
+          title: Text(key.split('/').last,
               style: GoogleFonts.manrope(
                   color: AppTheme.onSurface,
                   fontSize: 15,

@@ -31,7 +31,13 @@ class LibraryProvider extends ChangeNotifier {
 
   SharedPreferences? _prefs;
 
-  List<SongModel> get songs => _searchQuery.isEmpty ? _songs : _filteredSongs;
+  /// Catálogo completo, sin filtrar por búsqueda. La restauración de sesión
+  /// y las colecciones inteligentes deben usar siempre esta lista.
+  List<SongModel> get allSongs => _songs;
+  /// Catálogo completo. La búsqueda es local de ExploreScreen y no debe
+  /// filtrar el resto de pantallas (antes la Biblioteca se quedaba vacía).
+  List<SongModel> get songs => _songs;
+  List<SongModel> get searchResults => _filteredSongs;
   List<SongModel> get recentlyAdded => _recentlyAdded;
   List<AlbumModel> get albums => _albums;
   List<ArtistModel> get artists => _artists;
@@ -42,11 +48,18 @@ class LibraryProvider extends ChangeNotifier {
   bool get hasPermission => _hasPermission;
   int get totalSongs => _songs.length;
 
+  List<SongModel>? _mostPlayedCache;
+
   List<SongModel> get mostPlayed {
+    final cached = _mostPlayedCache;
+    if (cached != null) return cached;
     final sorted = [..._songs];
     sorted.sort(
         (a, b) => (_playCounts[b.id] ?? 0).compareTo(_playCounts[a.id] ?? 0));
-    return sorted.where((s) => (_playCounts[s.id] ?? 0) > 0).take(50).toList();
+    final result =
+        sorted.where((s) => (_playCounts[s.id] ?? 0) > 0).take(50).toList();
+    _mostPlayedCache = result;
+    return result;
   }
 
   LibraryProvider() {
@@ -59,16 +72,19 @@ class LibraryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> _requestPermission() async {
-    if (await Permission.audio.isGranted) return true;
-    var status = await Permission.audio.request();
-    if (status.isGranted) return true;
-    status = await Permission.storage.request();
-    return status.isGranted;
-  }
+  /// Al arrancar, main.dart ya pidió los permisos. Aquí solo se comprueba.
+  Future<bool> _requestPermission() async =>
+      (await Permission.audio.isGranted) ||
+      (await Permission.storage.isGranted);
 
+  /// Reintento desde la pantalla de permisos (segundo punto autorizado).
   Future<void> requestPermissionAndLoad() async {
-    _hasPermission = await _requestPermission();
+    final audioStatus = await Permission.audio.status;
+    if (audioStatus.isPermanentlyDenied) return;
+    var granted = audioStatus.isGranted;
+    if (!granted) granted = (await Permission.audio.request()).isGranted;
+    if (!granted) granted = (await Permission.storage.request()).isGranted;
+    _hasPermission = granted;
     if (_hasPermission) await loadLibrary();
     notifyListeners();
   }
@@ -84,7 +100,7 @@ class LibraryProvider extends ChangeNotifier {
         ignoreCase: true,
       );
       _songs = rawSongs.where((s) {
-        final path = (s.data ?? '').toLowerCase();
+        final path = s.data.toLowerCase();
         final dur = s.duration ?? 0;
         return s.isMusic == true &&
             !path.contains('whatsapp') &&
@@ -93,6 +109,7 @@ class LibraryProvider extends ChangeNotifier {
             !path.contains('audio-record') &&
             dur >= 10000;
       }).toList();
+      _mostPlayedCache = null;
 
       final byDate = [..._songs];
       byDate
@@ -120,34 +137,55 @@ class LibraryProvider extends ChangeNotifier {
   Future<void> _loadPersistedData() async {
     try {
       _prefs = await SharedPreferences.getInstance();
-      final prefs = _prefs!;
+    } catch (e) {
+      debugPrint('Error abriendo preferencias: $e');
+      return;
+    }
+    final prefs = _prefs!;
 
+    // Cada clave se carga de forma independiente: un valor corrupto no debe
+    // descartar todos los favoritos y playlists del usuario.
+    try {
+      final byId = {for (final s in _songs) s.id.toString(): s};
       final favIds = prefs.getStringList(_favoritesKey) ?? [];
-      _favorites.clear();
-      for (final id in favIds) {
-        final song = _songs.where((s) => s.id.toString() == id).firstOrNull;
-        if (song != null) _favorites.add(song);
-      }
+      _favorites
+        ..clear()
+        ..addAll(favIds.map((id) => byId[id]).whereType<SongModel>());
 
       final recentIds = prefs.getStringList(_recentlyKey) ?? [];
-      _recentlyPlayed.clear();
-      for (final id in recentIds) {
-        final song = _songs.where((s) => s.id.toString() == id).firstOrNull;
-        if (song != null) _recentlyPlayed.add(song);
-      }
+      _recentlyPlayed
+        ..clear()
+        ..addAll(recentIds.map((id) => byId[id]).whereType<SongModel>());
+    } catch (e) {
+      debugPrint('Error cargando favoritos/recientes: $e');
+    }
 
+    try {
       final playlistsJson = prefs.getString(_playlistsKey);
       if (playlistsJson != null) {
         _playlists = CustomPlaylist.decodeList(playlistsJson);
       }
+    } catch (e) {
+      debugPrint('Error cargando playlists: $e');
+    }
 
+    try {
       final playCountsJson = prefs.getString(_playCountsKey);
       if (playCountsJson != null) {
-        final map = jsonDecode(playCountsJson) as Map<String, dynamic>;
-        _playCounts = map.map((k, v) => MapEntry(int.parse(k), v as int));
+        final decoded = jsonDecode(playCountsJson);
+        if (decoded is Map<String, dynamic>) {
+          final counts = <int, int>{};
+          for (final entry in decoded.entries) {
+            final id = int.tryParse(entry.key);
+            if (id == null) continue;
+            counts[id] = entry.value is num ? (entry.value as num).toInt() : 0;
+          }
+          _playCounts = counts;
+          _mostPlayedCache = null;
+        }
       }
     } catch (e) {
-      debugPrint('Error cargando datos persistidos: $e');
+      debugPrint('Error cargando contadores: $e');
     }
   }
 
@@ -157,7 +195,7 @@ class LibraryProvider extends ChangeNotifier {
         ? []
         : _songs
             .where((s) =>
-                (s.title.toLowerCase().contains(_searchQuery) ?? false) ||
+                s.title.toLowerCase().contains(_searchQuery) ||
                 (s.artist?.toLowerCase().contains(_searchQuery) ?? false) ||
                 (s.album?.toLowerCase().contains(_searchQuery) ?? false))
             .toList();
@@ -210,7 +248,9 @@ class LibraryProvider extends ChangeNotifier {
 
   void incrementPlayCount(int songId) {
     _playCounts[songId] = (_playCounts[songId] ?? 0) + 1;
+    _mostPlayedCache = null;
     _savePlayCounts();
+    notifyListeners();
   }
 
   Future<void> _savePlayCounts() async {
@@ -285,9 +325,6 @@ class LibraryProvider extends ChangeNotifier {
     final songMap = {for (final s in _songs) s.id: s};
     return pl.songIds.map((id) => songMap[id]).whereType<SongModel>().toList();
   }
-
-  Future<List<SongModel>> getSongsFromPlaylist(Object playlistId) async =>
-      getSongsForPlaylist(playlistId.toString());
 
   Future<void> _savePlaylists() async {
     final prefs = await SharedPreferences.getInstance();

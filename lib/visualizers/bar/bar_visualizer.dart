@@ -7,6 +7,7 @@ import '../../theme/app_theme.dart';
 
 class BarVisualizer extends StatefulWidget {
   final Stream<List<double>> fftStream;
+  final bool isPlaying;
   final Stream<String>? statusStream;
   final Color paletteVibrant;
   final Color paletteDominant;
@@ -16,6 +17,7 @@ class BarVisualizer extends StatefulWidget {
   const BarVisualizer({
     super.key,
     required this.fftStream,
+    this.isPlaying = true,
     this.statusStream,
     this.paletteVibrant = AppTheme.primary,
     this.paletteDominant = AppTheme.primary,
@@ -35,7 +37,13 @@ class _BarVisualizerState extends State<BarVisualizer> {
   void initState() {
     super.initState();
     _levels = List.filled(widget.barCount, 0.0);
-    _sub = widget.fftStream.listen(_onData);
+    _sub = widget.fftStream.listen(_onData, onError: (_) => _resetLevels());
+  }
+
+  void _resetLevels() {
+    for (var i = 0; i < _levels.length; i++) {
+      _levels[i] = 0.0;
+    }
   }
 
   @override
@@ -44,15 +52,19 @@ class _BarVisualizerState extends State<BarVisualizer> {
     if (old.barCount != widget.barCount) {
       _levels = List.filled(widget.barCount, 0.0);
     }
+    if (old.isPlaying && !widget.isPlaying) _resetLevels();
     if (old.fftStream != widget.fftStream) {
-      _sub?.cancel();
-      _sub = widget.fftStream.listen(_onData);
+      unawaited(_sub?.cancel());
+      _resetLevels();
+      _sub = widget.fftStream.listen(_onData, onError: (_) => _resetLevels());
     }
   }
 
   void _onData(List<double> data) {
     if (!mounted || data.isEmpty) return;
-    final mapped = _mapBands(data, widget.barCount);
+    final mapped = widget.isPlaying
+        ? _mapBands(data, widget.barCount)
+        : List<double>.filled(widget.barCount, 0.0);
     var energy = 0.0;
     for (final value in mapped) {
       energy += value;
@@ -72,6 +84,10 @@ class _BarVisualizerState extends State<BarVisualizer> {
   }
 
   List<double> _mapBands(List<double> data, int count) {
+    // El plugin nativo ya entrega 64 bandas logarítmicas: se usan tal cual.
+    if (data.length == count) {
+      return [for (final value in data) value.clamp(0.0, 1.0).toDouble()];
+    }
     final output = List<double>.filled(count, 0.0);
     final last = data.length - 1;
     for (var i = 0; i < count; i++) {
@@ -95,7 +111,7 @@ class _BarVisualizerState extends State<BarVisualizer> {
 
   @override
   void dispose() {
-    _sub?.cancel();
+    unawaited(_sub?.cancel());
     super.dispose();
   }
 
@@ -104,7 +120,7 @@ class _BarVisualizerState extends State<BarVisualizer> {
     return CustomPaint(
       size: Size.infinite,
       painter: _BarVisualizerPainter(
-        levels: _levels,
+        levels: List<double>.unmodifiable(_levels),
         paletteVibrant: widget.paletteVibrant,
         paletteDominant: widget.paletteDominant,
         paletteMuted: widget.paletteMuted,
@@ -158,5 +174,16 @@ class _BarVisualizerPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _BarVisualizerPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _BarVisualizerPainter old) {
+    if (old.paletteVibrant != paletteVibrant ||
+        old.paletteDominant != paletteDominant ||
+        old.paletteMuted != paletteMuted ||
+        old.levels.length != levels.length) {
+      return true;
+    }
+    for (var i = 0; i < levels.length; i++) {
+      if (old.levels[i] != levels[i]) return true;
+    }
+    return false;
+  }
 }

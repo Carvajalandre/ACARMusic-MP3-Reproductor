@@ -1,5 +1,9 @@
 ﻿# ACARMusic Documentación Técnica (Parte 1)
 
+> **NOTA (20/11/2026):** Esta documento describe el estado original del proyecto.
+> La arquitectura real actual y las correcciones aplicadas están resumidas en la
+> **Parte 6** al final del archivo. Las rutas de las Partes 1-5 son históricas.
+
 ## Resumen del Proyecto
 
 **ACARMusic** es un reproductor de música local para Android, desarrollado en Flutter, inspirado en Samsung Music. Permite reproducir pistas almacenadas en el dispositivo con soporte completo de audio en segundo plano, notificaciones del sistema, y gestión de playlists personalizadas. Es open source, personalizable y optimizado para rendimiento y baterÃ­a.
@@ -551,13 +555,173 @@ AudioProvider (skipNext, skipPrevious, togglePlayPause)
 
 | Ãtem | Archivo | DescripciÃ³n |
 |---|---|---|
-| `playlist_detail_screen.dart` | `lib/screens/` | Pantalla legacy; `getSongsFromPlaylist(int)` no existe en el provider actual. Reemplazar con `SongListScreen`. |
-| GÃ©neros sin filtrado | `explore_screen.dart` | Las tarjetas de gÃ©neros son decorativas; no filtran canciones por gÃ©nero real. |
-| Ecualizador | `settings_screen.dart` | Muestra mensaje de que requiere integraciÃ³n del sistema. No implementado. |
-| Permisos en inglÃ©s | `permission_screen.dart` | Texto en inglÃ©s ("Grant Permission", "Music Library Access"). |
-| Switch de tema | `settings_screen.dart` | El `Switch` de "Tema oscuro" tiene estado local pero no cambia el `ThemeMode` real de la app (siempre oscuro). |
-| BotÃ³n `â‹®` en player | `player_screen.dart` | El `IconButton` de "MÃ¡s opciones" no hace nada aÃºn (`onPressed: () {}`). |
+| Géneros sin filtrado | `explore_screen.dart` | Tarjetas decorativas (sin `onTap` falso). |
+| Ecualizador | `settings_screen.dart` | Requiere integración del sistema. No implementado. |
+| "Ajustes" desde el reproductor | `player_screen.dart` | Abre un diálogo "Próximamente". |
 
 ---
 
-*DocumentaciÃ³n generada el 4 de mayo de 2026. Rama: `CarvaNew`. Dispositivo de prueba: Samsung S20 FE.*
+*Documentación original generada el 4 de mayo de 2026. Rama: `CarvaNew`. Dispositivo de prueba: Samsung S20 FE.*
+
+---
+
+# ACARMusic — Parte 6: Estado actual y correcciones (20/11/2026)
+
+## Estructura real de `lib/`
+
+```
+main.dart / app.dart
+audio/
+  audio_provider.dart      → estado de reproducción, sesión, temporizador, visualizador
+  audio_handler.dart       → BaseAudioHandler + notificación/MediaSession
+  settings/                → sleep_timer_sheet, equalizer_dialog, animation_style_sheet
+library/
+  library_provider.dart    → biblioteca, favoritos, playlists, contadores
+  models/custom_playlist.dart
+  widgets/track_tile.dart
+screens/
+  home/, library/, explore/, player/, playlist/, settings/
+theme/
+  app_theme.dart           → darkTheme + lightTheme
+  theme_provider.dart      → ThemeMode persistido
+visualizers/
+  visualizer_service.dart  → puente EventChannel/MethodChannel con el FFT nativo
+  visualizer_factory.dart
+  animation_style.dart
+  vinyl/, bar/, radial/, minimalist/
+widgets/
+  mini_player.dart, buttons/
+```
+
+## Correcciones aplicadas
+
+### Reproducción (`audio/audio_provider.dart`)
+- **Fuente única de verdad:** `playerStateStream` sincroniza `_isPlaying` con el
+  player real en todo momento; los controles de la notificación ya no dejan el
+  icono desincronizado.
+- **Peticiones diferidas acumuladas:** los `skipNext`/`skipPrevious` rápidos se
+  cuentan como pasos relativos y se reprocesan en orden; ya no se pierden.
+- **`repeat.one`:** se usa `LoopMode.one` de just_audio + guard de reentrada.
+- **Restauración de sesión:** `try/catch` integral, flag anti-race, validación
+  de índices/casts y **se restaura `wasPlaying`** (antes se guardaba y se ignoraba).
+- **Guardado de posición:** throttle de 700 ms en vez de debounce (el debounce
+  nunca disparaba porque los eventos llegan cada ~100 ms).
+- **`seekTo`/`skipPrevious`:** usan `_player.duration` y `_player.position`
+  reales en lugar de los notifiers, que podían estar desactualizados.
+- **Temporizador de sueño:** se cancela el `_countdownTimer` al dispararse.
+- **Suscripciones** a `positionStream`, `durationStream` y `playerStateStream`
+  canceladas en `dispose`.
+- **Eliminado** el logging de diagnóstico (8 escrituras a SharedPreferences por
+  cada cambio de pista).
+- `playSong` valida índice y existencia del archivo **antes** de mutar el estado.
+
+### Animaciones (`visualizers/`)
+- `VisualizerService` serializa `start`/`stop` con un token de generación;
+  el listener nativo de una sesión vieja nunca sobrevive a la nueva.
+- `dispose()` usa `unawaited(...)` con `catch` real para `invokeMethod`.
+- `_silenceFrame` cacheado; los timers se detienen cuando no hay suscriptores.
+- `RadialVisualizer` usa `AnimationController` (respeta `TickerMode`) en vez de
+  `Timer.periodic` de 33 ms.
+- `TickerMode` en `app.dart` es la única fuente de verdad del ciclo de vida:
+  se eliminaron los `WidgetsBindingObserver` duplicados del vinilo y del player.
+- `isPlaying` se pasa a bar/radial; `vinyl` y `minimalist` ya no arrancan FFT.
+- Painters con `shouldRepaint` comparativo sobre copias inmutables de niveles.
+
+### UI y estado
+- La búsqueda es local de `ExploreScreen` (`library.searchResults`): ya no
+  filtra la Biblioteca ni "Mezclar".
+- **Switch de tema funcional** (`ThemeProvider` + `AppTheme.lightTheme`).
+- `PopScope` en el shell completo (también en landscape).
+- MiniPlayer superpuesto de forma consistente en Home y `SongListScreen`.
+- Slider con estado local de arrastre; el seek se aplica en `onChangeEnd`.
+- Permisos centralizados en `main.dart`; `PermissionScreen` ofrece
+  `openAppSettings()` si el permiso es permanente. Textos en español.
+- Eliminado `playlist_detail_screen.dart` (código muerto) y su shim.
+
+## Verificación
+
+- `flutter analyze` → **No issues found**.
+- `flutter test` → **7 tests passed** (`test/acar_music_test.dart` +
+  `test/widget_test.dart`).
+
+## Actualización (animación test + FFT)
+
+### "animation test" implementada
+`lib/visualizers/animation_test/animation_test_visualizer.dart`: escena POV
+nocturna con monitor ultrawide, teclado RGB, horizonte planetario, borde ámbar,
+reloj, barra de tareas, letras secuenciales, espectro radial dorado/naranja
+alimentado por el FFT real y marca de agua final. La cámara arranca en primer
+plano inclinado y hace paneo + zoom out automático (o al tocar la portada).
+Todo en un solo `AnimationController` → respeta `TickerMode`.
+
+### Corrección del FFT (barras y radial "no seguían la música")
+- **Causa raíz:** se había retirado la solicitud en runtime de `RECORD_AUDIO`,
+  obligatoria para `android.media.audiofx.Visualizer`. El plugin nativo fallaba
+  y Dart usaba un generador **simulado** con datos aleatorios. Se restauró el
+  permiso (no se graba ni envía audio) y se eliminó el generador falso: si el
+  FFT nativo falla ahora emite silencio.
+- **Kotlin** (`VisualizerPlugin.kt`): mapeo logarítmico de 40 Hz a 16 kHz usando
+  el `samplingRate` real del callback (antes lineal → toda la música en las
+  10 primeras barras), se descarta el bin DC, AGC con decaimiento lento
+  (`0.995`) y piso de 48 en vez de 4, y curva perceptiva `pow(0.78)`.
+- El reintento del FFT se hace también al pasar a `processingState.ready`,
+  porque `just_audio` a veces expone el `androidAudioSessionId` tarde.
+- Dart usa las 64 bandas nativas 1:1 en `BarVisualizer` y `RadialVisualizer`
+  (antes las volvía a remapear, doblando la curva logarítmica).
+- `flutter build apk --release` → **APK generado** (60,2 MB).
+
+## Actualización (Espectro radial sincronizado, 2026-11-20)
+
+El radial parecía una animación fija e idéntica en todas las pistas. Causas y
+correcciones:
+
+- **Remapeo doble:** se tomaban solo 33 bandas (la mitad derecha) y se
+  reflejaban, y `_mapBands` volvía a aplicar una curva logarítmica sobre las 64
+  bandas que el nativo ya entrega calibradas. Ahora se usan **las 64 bandas 1:1**
+  alrededor de todo el círculo; si el nativo entrega otro número se hace un
+  remuestreo lineal, sin curvas nuevas. Las 64 barras son el FFT real de esa
+  pista en ese instante.
+- **Anillo estático:** la longitud mínima constante (`0.06 + level * 0.94`)
+  dibujaba siempre el mismo aro aunque no hubiera audio. Se eliminó: sin FFT no
+  se dibuja nada.
+- **Ritmo:** nuevo `RadialBeatDetector` (`radial_audio.dart`) compara la energía
+  de graves (bandas 0-9, ~40-160 Hz) contra una media móvil con umbral 1,22,
+  energía mínima 0,10 y periodo refractario de 150 ms. Cada golpe genera un
+  pulso que decae exponencialmente y se refleja en expansión de barras, anillo
+  interior y brillo; además cada barra tiene un **pico retenido** que cae
+  despacio. Ningún dato es simulado.
+- **Identidad por pista:** `glowColor` (color vibrante de la carátula) + `trackId`
+  (con `albumId` como respaldo) determinan la paleta de 5 paradas y la rotación
+  del espectro. `VisualizerFactory` y `PlayerScreen` propagan el id de la pista.
+  Dos canciones del mismo álbum siguen siendo distintas por su FFT y por su id.
+- **Ciclo de vida:** se mantiene el `AnimationController` (respeta `TickerMode`)
+  y el `shouldRepaint` comparativo, ahora también sobre picos, pulso y paleta.
+- **Tests:** 4 pruebas nuevas (detección, refractario/decaimiento, silencio y
+  paletas por pista) → `flutter test`: 10 tests en verde. `flutter analyze`:
+  No issues found.
+
+## Actualización (5 estilos radiales + carátula + cambio de pista)
+
+- `VisualizerStyle` sustituye el radial único por **cinco estilos enumerados**,
+  con miniatura propia en el selector (`RadialStylePreview`):
+  1. `Espectro radial 1 · Barras`, 2. `... 2 · Onda`, 3. `... 3 · Pétalos`,
+  4. `... 4 · Doble anillo`, 5. `... 5 · Neón`.
+  Los cinco comparten el mismo FFT real, el detector de golpes, la paleta por
+  pista y los picos retenidos; cambia únicamente el dibujo (`RadialVariant` en
+  `_RadialPainter`). Un valor guardado antiguamente como `radialVisualizer`
+  se migra a la variante 1.
+- **Carátula de la pista:** el radial dibuja en el centro la portada de la
+  canción en curso (`QueryArtworkWidget` con id de pista). La clave del widget
+  incluye el id para forzar la recarga al cambiar de canción.
+- **Cambio de pista ("controlador" pegado):** tres correcciones:
+  - `VisualizerFactory` lleva `ValueKey('visualizer-${song.id}')` en el
+    reproductor (vertical y horizontal) → estado nuevo por pista.
+  - `_extractPalette` / `_fallback` comprueban `_lastSongId == song.id` tras
+    cada `await`, para que una carga lenta no pinte los colores de la pista
+    anterior.
+  - Se añadieron claves por id a las carátulas del miniplayer, la cola y la
+    animación "test", que podían conservar la primera imagen cargada.
+- `usesFft` centraliza qué estilos arrancan el Visualizer nativo (los 5
+  radiales, barras y animation test).
+- Verificación: analyze limpio, 11 tests en verde, APK de release regenerado.
+

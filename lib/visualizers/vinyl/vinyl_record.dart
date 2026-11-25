@@ -20,14 +20,12 @@ class VinylRecord extends StatefulWidget {
 }
 
 class _VinylRecordState extends State<VinylRecord>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
-  bool _appInForeground = true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 8),
@@ -35,23 +33,12 @@ class _VinylRecordState extends State<VinylRecord>
     if (widget.isPlaying) _ctrl.repeat();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden) {
-      _appInForeground = false;
-      if (_ctrl.isAnimating) _ctrl.stop();
-    } else if (state == AppLifecycleState.resumed) {
-      _appInForeground = true;
-      if (widget.isPlaying && !_ctrl.isAnimating) _ctrl.repeat();
-    }
-  }
-
+  // El ciclo de vida lo gobierna TickerMode en app.dart (única fuente de
+  // verdad). Sin guard de foreground: el controller siempre se sincroniza con
+  // isPlaying, incluso si llega un cambio desde la notificación en background.
   @override
   void didUpdateWidget(VinylRecord old) {
     super.didUpdateWidget(old);
-    if (!_appInForeground) return;
     if (widget.isPlaying && !_ctrl.isAnimating) {
       _ctrl.repeat();
     } else if (!widget.isPlaying && _ctrl.isAnimating) {
@@ -61,7 +48,6 @@ class _VinylRecordState extends State<VinylRecord>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _ctrl.dispose();
     super.dispose();
   }

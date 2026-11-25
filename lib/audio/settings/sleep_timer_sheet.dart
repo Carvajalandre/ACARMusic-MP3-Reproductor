@@ -2,15 +2,28 @@ import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../audio_provider.dart';
 
-class SleepTimerSheet extends StatelessWidget {
+class SleepTimerSheet extends StatefulWidget {
   final AudioProvider audio;
 
   const SleepTimerSheet({super.key, required this.audio});
 
   @override
+  State<SleepTimerSheet> createState() => _SleepTimerSheetState();
+}
+
+class _SleepTimerSheetState extends State<SleepTimerSheet> {
+  final _customCtrl = TextEditingController();
+  AudioProvider get audio => widget.audio;
+
+  @override
+  void dispose() {
+    _customCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final presets = [15, 30, 45, 60, 90, 120];
-    final customCtrl = TextEditingController();
+    const presets = [15, 30, 45, 60, 90, 120];
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -59,7 +72,7 @@ class SleepTimerSheet extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
-                    controller: customCtrl,
+                    controller: _customCtrl,
                     keyboardType: TextInputType.number,
                     style: const TextStyle(color: AppTheme.onSurface),
                     decoration: const InputDecoration(
@@ -76,7 +89,7 @@ class SleepTimerSheet extends StatelessWidget {
                 const SizedBox(width: 12),
                 ElevatedButton(
                   onPressed: () {
-                    final min = int.tryParse(customCtrl.text.trim());
+                    final min = int.tryParse(_customCtrl.text.trim());
                     if (min != null && min > 0) {
                       audio.setSleepTimer(min);
                       Navigator.pop(context);

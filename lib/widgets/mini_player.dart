@@ -21,8 +21,12 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    final audio = context.watch<AudioProvider>();
-    final song = audio.currentSong;
+    final audio = context.read<AudioProvider>();
+    // `read` no suscribe: con él el mini reproductor se quedaba con la PRIMERA
+    // canción aunque cambiara de pista (el widget padre usa un hijo `const` y
+    // Flutter omite su actualización). `select` suscribe de verdad y fuerza el
+    // rebuild en cada cambio de pista, aunque se reproduzca en segundo plano.
+    final song = context.select<AudioProvider, SongModel?>((a) => a.currentSong);
     if (song == null) return const SizedBox.shrink();
     if (_lastSongId != song.id) {
       _lastSongId = song.id;
@@ -71,6 +75,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                         width: 48,
                         height: 48,
                         child: QueryArtworkWidget(
+                          key: ValueKey('mini-art-${song.id}'),
                           id: song.id,
                           type: ArtworkType.AUDIO,
                           artworkFit: BoxFit.cover,

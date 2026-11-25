@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../theme/app_theme.dart';
-import '../../audio/audio_provider.dart';
 import '../../library/library_provider.dart';
 import '../library/library_screen.dart';
 import '../explore/explore_screen.dart';
@@ -34,43 +33,42 @@ class _HomeScreenState extends State<HomeScreen> {
       return const PermissionScreen();
     }
 
-    return OrientationBuilder(
-      builder: (context, orientation) {
-        if (orientation == Orientation.landscape) {
-          return _buildLandscape();
-        }
-        return _buildPortrait();
-      },
-    );
-  }
-
-  Widget _buildPortrait() {
+    // PopScope en el shell completo: también aplica en landscape.
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (!didPop) await SystemNavigator.pop();
       },
-      child: Scaffold(
+      child: OrientationBuilder(
+        builder: (context, orientation) {
+          if (orientation == Orientation.landscape) {
+            return _buildLandscape();
+          }
+          return _buildPortrait();
+        },
+      ),
+    );
+  }
+
+  Widget _buildPortrait() {
+    return Scaffold(
         backgroundColor: AppTheme.background,
         body: Stack(
           children: [
             IndexedStack(index: _currentIndex, children: _screens),
-            Selector<AudioProvider, int?>(
-              selector: (_, a) => a.currentSong?.id,
-              builder: (context, songId, _) {
-                if (songId == null) return const SizedBox.shrink();
-                return const Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: MiniPlayer(),
-                );
-              },
+            // MiniPlayer se suscribe él mismo a `currentSong` con `select`:
+            // se muestra/oculta y actualiza la pista sin depender del padre
+            // (un hijo `const` del Selector no se actualizaba al cambiar de
+            // canción y el mini player se quedaba con la primera pista).
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: MiniPlayer(),
             ),
           ],
         ),
         bottomNavigationBar: _buildBottomNav(),
-      ),
     );
   }
 
@@ -84,17 +82,11 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Stack(
               children: [
                 IndexedStack(index: _currentIndex, children: _screens),
-                Selector<AudioProvider, int?>(
-                  selector: (_, a) => a.currentSong?.id,
-                  builder: (context, songId, _) {
-                    if (songId == null) return const SizedBox.shrink();
-                    return const Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: MiniPlayer(),
-                    );
-                  },
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: MiniPlayer(),
                 ),
               ],
             ),
@@ -126,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: active
-                    ? Colors.white.withOpacity(0.08)
+                    ? Colors.white.withValues(alpha: 0.08)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(999),
               ),
@@ -152,9 +144,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       height: 80,
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.8),
+        color: Colors.black.withValues(alpha: 0.8),
         border: Border(
-          top: BorderSide(color: Colors.white.withOpacity(0.05), width: 0.5),
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.05), width: 0.5),
         ),
       ),
       child: Row(
@@ -169,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
               decoration: BoxDecoration(
                 color: active
-                    ? Colors.white.withOpacity(0.08)
+                    ? Colors.white.withValues(alpha: 0.08)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(999),
               ),

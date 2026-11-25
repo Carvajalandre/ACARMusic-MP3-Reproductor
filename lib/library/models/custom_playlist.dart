@@ -17,11 +17,17 @@ class CustomPlaylist {
         'songIds': songIds,
       };
 
-  factory CustomPlaylist.fromJson(Map<String, dynamic> json) => CustomPlaylist(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        songIds: List<int>.from(json['songIds'] as List),
-      );
+  factory CustomPlaylist.fromJson(Map<String, dynamic> json) {
+    final rawIds = json['songIds'];
+    return CustomPlaylist(
+      id: json['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      name: json['name']?.toString() ?? 'Sin nombre',
+      songIds: rawIds is List
+          ? rawIds.whereType<num>().map((e) => e.toInt()).toList()
+          : <int>[],
+    );
+  }
 
   CustomPlaylist copyWith({String? name, List<int>? songIds}) => CustomPlaylist(
         id: id,
@@ -30,8 +36,12 @@ class CustomPlaylist {
       );
 
   static List<CustomPlaylist> decodeList(String json) {
-    final list = jsonDecode(json) as List;
-    return list.map((e) => CustomPlaylist.fromJson(e as Map<String, dynamic>)).toList();
+    final decoded = jsonDecode(json);
+    if (decoded is! List) return <CustomPlaylist>[];
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map(CustomPlaylist.fromJson)
+        .toList();
   }
 
   static String encodeList(List<CustomPlaylist> playlists) {

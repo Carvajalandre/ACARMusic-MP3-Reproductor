@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
+import 'theme/theme_provider.dart';
 import 'screens/home/home_screen.dart';
 
 final navigatorKey = GlobalKey<NavigatorState>();
@@ -29,7 +30,6 @@ class _ACARMusicAppState extends State<ACARMusicApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _requestNotificationPermission();
       if (!widget.audioServiceOk) {
         _showErrorDialog();
       }
@@ -62,7 +62,7 @@ class _ACARMusicAppState extends State<ACARMusicApp>
       await prefs.remove('last_crash_log');
 
       final ctx = navigatorKey.currentContext;
-      if (ctx == null) return;
+      if (ctx == null || !ctx.mounted) return;
 
       showDialog(
         context: ctx,
@@ -98,7 +98,7 @@ class _ACARMusicAppState extends State<ACARMusicApp>
   // para que el usuario pueda copiar el texto y reportarlo
   void _showErrorDialog() {
     final ctx = navigatorKey.currentContext;
-    if (ctx == null) return;
+    if (ctx == null || !ctx.mounted) return;
     showDialog(
       context: ctx,
       builder: (dialogContext) => AlertDialog(
@@ -128,21 +128,16 @@ class _ACARMusicAppState extends State<ACARMusicApp>
     );
   }
 
-  Future<void> _requestNotificationPermission() async {
-    final status = await Permission.notification.status;
-    if (status.isDenied) {
-      await Permission.notification.request();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    final themeMode = context.select<ThemeProvider, ThemeMode>((p) => p.themeMode);
     return TickerMode(
       enabled: _isForeground,
       child: MaterialApp(
         title: 'ACARMusic',
         debugShowCheckedModeBanner: false,
-        themeMode: ThemeMode.dark,
+        themeMode: themeMode,
+        theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,
         navigatorKey: navigatorKey,
         home: const HomeScreen(),

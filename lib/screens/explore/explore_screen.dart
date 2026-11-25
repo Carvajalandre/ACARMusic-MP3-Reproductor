@@ -39,7 +39,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
-    final audio = context.watch<AudioProvider>();
+    final audio = context.read<AudioProvider>();
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -109,7 +109,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
       );
 
   SliverList _buildSearchResults(LibraryProvider library, AudioProvider audio) {
-    final results = library.songs;
+    final results = library.searchResults;
     return SliverList(
       delegate: SliverChildBuilderDelegate(
         (ctx, i) {
@@ -186,7 +186,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Text(song.title ?? 'Unknown',
+                      Text(song.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.manrope(
@@ -253,9 +253,7 @@ class _GenreCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {},
-      child: Container(
+    return Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -276,10 +274,9 @@ class _GenreCard extends StatelessWidget {
                 right: -8,
                 bottom: -12,
                 child: Icon(genre.icon,
-                    color: Colors.white.withOpacity(0.1), size: 64)),
+                    color: Colors.white.withValues(alpha: 0.1), size: 64)),
           ],
         ),
-      ),
     );
   }
 }

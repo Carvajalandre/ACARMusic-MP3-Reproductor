@@ -198,7 +198,9 @@ class ACARMusicHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> play() async {
-    await _player.play();
+    // just_audio.play() solo completa al pausar/finalizar: await-earlo aquí
+    // bloquea la cola de mensajes de audio_service (notificación/auriculares).
+    _player.play();
     _broadcastState();
   }
 

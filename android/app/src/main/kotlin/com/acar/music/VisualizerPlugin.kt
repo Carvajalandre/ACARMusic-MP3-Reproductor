@@ -6,6 +6,9 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.lang.ref.WeakReference
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 class VisualizerPlugin(
@@ -18,7 +21,10 @@ class VisualizerPlugin(
     private val CHANNEL = "com.acar.music/visualizer"
     private val FFT_CHANNEL = "com.acar.music/visualizer_fft"
     private val fftBuffer = FloatArray(64)
-    private var runningMax = 1.0
+    private var sampleRate = 48000
+    // Referencia de amplitud con decaimiento lento: evita que los pasajes
+    // silenciosos se amplifiquen hasta llenar las barras (AGC agresivo).
+    private var peakRef = 64.0
 
     private val methodChannel: MethodChannel
     private val eventChannel: EventChannel
@@ -48,7 +54,7 @@ class VisualizerPlugin(
             "startVisualizer" -> {
                 val sessionId = call.argument<Int>("audioSessionId") ?: 0
                 val ok = startVisualizer(sessionId)
-                result.success(ok) // false = Dart usa simulado
+                result.success(ok) // false = Dart usa el FFT offline del archivo
             }
             "stopVisualizer" -> {
                 stopVisualizer()
@@ -58,11 +64,18 @@ class VisualizerPlugin(
         }
     }
 
-    // Un solo intento. Sin retry — Samsung DSP bloquea permanente, no transitorio.
+    // SOLO la sesión del reproductor. Antes, si el DSP del dispositivo bloqueaba
+    // la captura, se caía a Visualizer(0) (mezcla global): eso captura notifications,
+    // otras apps o ruido, y devolvía true, así que Dart nunca conmutaba al FFT del
+    // archivo. El radial "se movía" pero NO seguía la pista. Session 0 => false
+    // para que VisualizerService use directamente el FFT offline de esa pista.
     private fun startVisualizer(sessionId: Int): Boolean {
         stopVisualizer()
-        return try {
-            val viz = Visualizer(sessionId)
+        peakRef = 64.0
+        if (sessionId == 0) return false
+        var viz: Visualizer? = null
+        try {
+            viz = Visualizer(sessionId)
             viz.enabled = false
             val captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(512)
             viz.setCaptureSize(captureSize)
@@ -70,17 +83,24 @@ class VisualizerPlugin(
             listener = object : Visualizer.OnDataCaptureListener {
                 override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
                 override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
+                    // Un visualizador liberado puede seguir entregando frames:
+                    // nunca mezclar la pista anterior con la nueva.
+                    if (v !== visualizer || eventSink == null) return
+                    if (s > 0) sampleRate = s
                     processFft(fft)
                 }
             }
 
-            val captureRate = Visualizer.getMaxCaptureRate().coerceAtMost(30000)
+            // 50 Hz: suficiente para seguir el ritmo sin saturar la CPU.
+            val captureRate = Visualizer.getMaxCaptureRate().coerceAtMost(50000)
             viz.setDataCaptureListener(listener, captureRate, false, true)
             viz.enabled = true
             visualizer = viz
-            true
+            return true
         } catch (e: Exception) {
-            false
+            listener = null
+            try { viz?.release() } catch (_: Exception) {}
+            return false
         }
     }
 
@@ -88,9 +108,10 @@ class VisualizerPlugin(
         if (fft == null || eventSink == null) return
         val sourceBins = fft.size / 2
         val n = minOf(sourceBins, fftBuffer.size)
+        // El bin 0 es DC; se empieza en 1 para que no sature las barras graves.
         val mags = DoubleArray(sourceBins)
         var frameMax = 0.0
-        for (i in 0 until sourceBins) {
+        for (i in 1 until sourceBins) {
             val real = fft[i * 2].toDouble()
             val imag = fft[i * 2 + 1].toDouble()
             val magnitude = sqrt(real * real + imag * imag)
@@ -98,15 +119,30 @@ class VisualizerPlugin(
             if (magnitude > frameMax) frameMax = magnitude
         }
         if (frameMax < 1.6) {
-            for (i in 0 until n) fftBuffer[i] = 0f
+            peakRef = max(24.0, peakRef * 0.98)
+            java.util.Arrays.fill(fftBuffer, 0f)
             eventSink?.success(fftBuffer.toList().subList(0, n))
             return
         }
-        runningMax = if (frameMax > runningMax) frameMax else runningMax * 0.94
-        val gainRef = runningMax.coerceAtLeast(4.0)
+
+        // Referencia estable: sube rápido y baja muy despacio. Así el nivel de
+        // cada barra representa la energía real de esa banda en ese instante.
+        peakRef = max(frameMax, peakRef * 0.995)
+        val gainRef = max(48.0, peakRef)
+
+        // Mapeo logarítmico de frecuencias (40 Hz → 16 kHz). El mapeo lineal
+        // anterior dejaba casi toda la música en las 10 primeras barras y el
+        // resto quieto, que era la causa de que "no fuera acorde al audio".
+        val hzPerBin = (sampleRate / 2.0) / sourceBins
+        val minHz = 40.0
+        val maxHz = minOf(16000.0, sampleRate / 2.0)
+        val ratio = maxHz / minHz
+
         for (i in 0 until n) {
-            val start = ((i.toDouble() / n) * sourceBins).toInt().coerceIn(0, sourceBins - 1)
-            val end = ((((i + 1).toDouble() / n) * sourceBins).toInt() + 1).coerceIn(start + 1, sourceBins)
+            val f0 = minHz * ratio.pow(i.toDouble() / n)
+            val f1 = minHz * ratio.pow((i + 1).toDouble() / n)
+            val start = min(sourceBins - 1, max(1, (f0 / hzPerBin).toInt()))
+            val end = min(sourceBins, max(start + 1, (f1 / hzPerBin).toInt()))
             var peak = 0.0
             var sum = 0.0
             for (j in start until end) {
@@ -114,16 +150,19 @@ class VisualizerPlugin(
                 sum += mags[j]
             }
             val avg = sum / (end - start)
-            val normalized = ((peak * 0.7 + avg * 0.3) / gainRef)
-            fftBuffer[i] = normalized.toFloat().coerceIn(0f, 1f)
+            val energy = (peak * 0.65 + avg * 0.35) / gainRef
+            // Curva perceptual: realza variaciones suaves sin saturar.
+            fftBuffer[i] = energy.pow(0.78).toFloat().coerceIn(0f, 1f)
         }
         eventSink?.success(fftBuffer.toList().subList(0, n))
     }
 
     private fun stopVisualizer() {
+        val old = visualizer
+        visualizer = null
+        listener = null
         try {
-            visualizer?.apply { enabled = false; release() }
-            visualizer = null
+            old?.apply { enabled = false; release() }
         } catch (_: Exception) {}
     }
 

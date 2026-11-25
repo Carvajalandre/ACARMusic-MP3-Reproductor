@@ -12,6 +12,7 @@ import 'app.dart';
 import 'audio/audio_handler.dart';
 import 'audio/audio_provider.dart';
 import 'library/library_provider.dart';
+import 'theme/theme_provider.dart';
 
 bool _audioServiceOk = false;
 String _audioServiceError = '';
@@ -69,11 +70,15 @@ Future<void> main() async {
 
     await _requestPermissions();
 
+    final prefs = await SharedPreferences.getInstance();
+    final initialTheme =
+        ThemeProvider.modeFromName(prefs.getString(ThemeProvider.storageKey));
+
     ACARMusicHandler audioHandler;
     try {
       audioHandler = await AudioService.init(
         builder: () => ACARMusicHandler(),
-        config: AudioServiceConfig(
+        config: const AudioServiceConfig(
           androidNotificationChannelId: 'com.acar.music.playback',
           androidNotificationChannelName: 'ACARMusic',
           androidNotificationChannelDescription: 'Reproducción de música',
@@ -95,12 +100,13 @@ Future<void> main() async {
     runApp(
       MultiProvider(
         providers: [
+          ChangeNotifierProvider(create: (_) => ThemeProvider(initialTheme)),
           ChangeNotifierProvider(create: (_) => LibraryProvider()),
           ChangeNotifierProxyProvider<LibraryProvider, AudioProvider>(
             create: (_) => AudioProvider(audioHandler),
             update: (_, library, audio) {
               audio!.bindLibrary(
-                songs: library.songs,
+                songs: library.allSongs,
                 hasPermission: library.hasPermission,
                 isLoading: library.isLoading,
               );
@@ -134,15 +140,19 @@ Future<void> main() async {
   });
 }
 
+/// Único punto de solicitud de permisos al arrancar.
 Future<void> _requestPermissions() async {
-  if (await Permission.audio.isDenied) {
-    await Permission.audio.request();
-  }
-  if (await Permission.storage.isDenied) {
-    await Permission.storage.request();
-  }
-  if (await Permission.microphone.isDenied) {
-    await Permission.microphone.request();
+  for (final permission in [
+    Permission.notification,
+    Permission.audio,
+    Permission.storage,
+    // android.media.audiofx.Visualizer (FFT de los visualizadores) exige
+    // RECORD_AUDIO en runtime. No se graba ni se envía audio a ningún sitio.
+    Permission.microphone,
+  ]) {
+    final status = await permission.status;
+    if (status.isGranted || status.isPermanentlyDenied) continue;
+    await permission.request();
   }
   try {
     if (!(await Permission.ignoreBatteryOptimizations.isGranted)) {

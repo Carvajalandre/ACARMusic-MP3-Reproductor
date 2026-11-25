@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../visualizers/animation_style.dart';
 import '../../theme/app_theme.dart';
 import '../../audio/audio_provider.dart';
+import '../../theme/theme_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,11 +14,10 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _darkMode = true;
-
   @override
   Widget build(BuildContext context) {
     final audio = context.watch<AudioProvider>();
+    final theme = context.watch<ThemeProvider>();
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -46,10 +46,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildSettingTile(
                   icon: Icons.dark_mode_rounded,
                   title: 'Apariencia',
-                  subtitle: 'Tema oscuro',
+                  subtitle: theme.isDark ? 'Tema oscuro' : 'Tema claro',
                   trailing: Switch(
-                    value: _darkMode,
-                    onChanged: (v) => setState(() => _darkMode = v),
+                    value: theme.isDark,
+                    onChanged: (v) =>
+                        theme.setThemeMode(v ? ThemeMode.dark : ThemeMode.light),
                     activeThumbColor: AppTheme.primary,
                   ),
                   onTap: null,
@@ -112,7 +113,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Text('Temporizador de sueño',
                       style: GoogleFonts.manrope(
                           color: AppTheme.onSurface, fontSize: 14, fontWeight: FontWeight.w600)),
-                  Text(subtitle!.toUpperCase(),
+                  Text(subtitle.toUpperCase(),
                       style: GoogleFonts.manrope(
                           color: isActive ? AppTheme.primary : AppTheme.onSurfaceVariant,
                           fontSize: 10, letterSpacing: 0.5, fontWeight: FontWeight.w600)),
@@ -219,7 +220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       ),
-    );
+    ).whenComplete(() => customCtrl.dispose());
   }
 
   String _fmt(Duration d) {

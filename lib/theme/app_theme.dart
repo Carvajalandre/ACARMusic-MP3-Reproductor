@@ -37,4 +37,22 @@ class AppTheme {
     splashColor: Colors.transparent,
     highlightColor: Colors.transparent,
   );
+
+  /// Tema claro opcional, seleccionable desde Ajustes → Apariencia.
+  static ThemeData get lightTheme => ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    scaffoldBackgroundColor: const Color(0xFFF5F5F7),
+    colorScheme: const ColorScheme.light(
+      surface: Color(0xFFFFFFFF),
+      primary: Color(0xFF3A3A3C),
+      onPrimary: Colors.white,
+      tertiary: Color(0xFF1C1C1E),
+      onTertiary: Colors.white,
+      onSurface: Color(0xFF1C1C1E),
+      onSurfaceVariant: Color(0xFF6E6E73),
+    ),
+    splashColor: Colors.transparent,
+    highlightColor: Colors.transparent,
+  );
 }

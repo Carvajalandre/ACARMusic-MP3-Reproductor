@@ -59,7 +59,9 @@ class _SongListScreenState extends State<SongListScreen> {
   String? _activeLetter;
   bool _showLetterOverlay = false;
   final GlobalKey _sidebarKey = GlobalKey();
-  static const double _tileHeight = 72.0;
+  // Misma altura que TrackTile para que el itemExtent y el índice alfabético
+  // coincidan con la posición real de cada fila.
+  static const double _tileHeight = TrackTile.height;
   static const double _kExpandedHeader = 200.0;
   static const double _kHeaderInfoHeight = 40.0;
 
@@ -96,7 +98,7 @@ class _SongListScreenState extends State<SongListScreen> {
   void _buildLetterIndex(List<SongModel> songs) {
     _letterIndex = {};
     for (int i = 0; i < songs.length; i++) {
-      final raw = songs[i].title ?? '';
+      final raw = songs[i].title;
       final letter = raw.isEmpty ? '#' : raw[0].toUpperCase();
       final key = RegExp(r'[A-Z]').hasMatch(letter) ? letter : '#';
       _letterIndex.putIfAbsent(key, () => i);
@@ -106,8 +108,10 @@ class _SongListScreenState extends State<SongListScreen> {
   void _scrollToLetter(String letter) {
     final idx = _letterIndex[letter];
     if (idx == null) return;
-    final collapsedOffset = _kExpandedHeader - kToolbarHeight;
-    final targetOffset = collapsedOffset + _kHeaderInfoHeight + (idx * _tileHeight);
+    const collapsedOffset = _kExpandedHeader - kToolbarHeight;
+    // Sin el alto de la franja de información: si se sumaba, la canción
+    // quedaba 40px por encima del sidebar alfabético.
+    final targetOffset = collapsedOffset + (idx * _tileHeight);
     _scrollController.animateTo(
       targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
       duration: const Duration(milliseconds: 250),
@@ -132,45 +136,45 @@ class _SongListScreenState extends State<SongListScreen> {
     }
   }
 
-  void _syncSorted() {
-    if (widget.playlistId == null) return;
-    final liveSongs = context.read<LibraryProvider>().getSongsForPlaylist(widget.playlistId!);
-    final liveIds = liveSongs.map((s) => s.id).toList();
-    final sortedIds = _sorted.map((s) => s.id).toList();
-    if (listEquals(liveIds, sortedIds)) return;
-    _sorted = List.from(liveSongs);
+  void _sortInPlace() {
     switch (_sortMode) {
       case _SortMode.az:
-        _sorted.sort((a, b) => (a.title ?? '')
-            .toLowerCase()
-            .compareTo((b.title ?? '').toLowerCase()));
+        _sorted.sort((a, b) =>
+            a.title.toLowerCase().compareTo(b.title.toLowerCase()));
         break;
       case _SortMode.recentlyAdded:
+        _sorted.sort((a, b) =>
+            (b.dateModified ?? 0).compareTo(a.dateModified ?? 0));
+        break;
       case _SortMode.custom:
         break;
     }
   }
 
+  void _syncSorted() {
+    final library = context.read<LibraryProvider>();
+    // También se sincronizan las listas inteligentes (favoritos, recientes…),
+    // no solo las playlists personalizadas.
+    final liveSongs = widget.playlistId != null
+        ? library.getSongsForPlaylist(widget.playlistId!)
+        : widget.songs;
+    if (listEquals(liveSongs.map((s) => s.id).toList(),
+        _sorted.map((s) => s.id).toList())) {
+      return;
+    }
+    _sorted = List.from(liveSongs);
+    _sortInPlace();
+  }
+
   void _applySort() {
     _syncSorted();
-    setState(() {
-      switch (_sortMode) {
-        case _SortMode.az:
-          _sorted.sort((a, b) => (a.title ?? '')
-              .toLowerCase()
-              .compareTo((b.title ?? '').toLowerCase()));
-          break;
-        case _SortMode.recentlyAdded:
-        case _SortMode.custom:
-          break;
-      }
-    });
+    setState(_sortInPlace);
   }
 
   void _onReorder(int oldIndex, int newIndex, LibraryProvider library) {
     if (widget.playlistId == null) return;
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
+      // onReorderItem ya ajusta newIndex al item eliminado.
       final song = _sorted.removeAt(oldIndex);
       _sorted.insert(newIndex, song);
     });
@@ -181,7 +185,7 @@ class _SongListScreenState extends State<SongListScreen> {
   @override
   Widget build(BuildContext context) {
     final isPlaylist = widget.playlistId != null;
-    if (isPlaylist) context.watch<LibraryProvider>();
+    context.watch<LibraryProvider>();
 
     _syncSorted();
 
@@ -196,15 +200,16 @@ class _SongListScreenState extends State<SongListScreen> {
 
     return Scaffold(
       backgroundColor: AppTheme.background,
-      bottomNavigationBar: Selector<AudioProvider, int?>(
-        selector: (_, a) => a.currentSong?.id,
-        builder: (_, songId, __) {
-          if (songId == null) return const SizedBox.shrink();
-          return const MiniPlayer();
-        },
-      ),
       body: Stack(
         children: [
+          // MiniPlayer superpuesto como en Home: él mismo se suscribe a
+          // `currentSong`, así que se actualiza al cambiar de pista.
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: MiniPlayer(),
+          ),
           CustomScrollView(
             controller: _scrollController,
             slivers: [
@@ -294,7 +299,9 @@ class _SongListScreenState extends State<SongListScreen> {
               padding: const EdgeInsets.only(bottom: 8),
               sliver: SliverReorderableList(
                 itemCount: _sorted.length,
-                onReorder: (o, n) => _onReorder(o, n, context.read<LibraryProvider>()),
+                itemExtent: _tileHeight,
+                onReorderItem: (o, n) =>
+                    _onReorder(o, n, context.read<LibraryProvider>()),
                 itemBuilder: (context, i) {
                   final song = _sorted[i];
                   return ReorderableCustomDelayDragStartListener(
@@ -348,7 +355,7 @@ class _SongListScreenState extends State<SongListScreen> {
                 childCount: _sorted.length,
               ),
             ),
-          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          const SliverToBoxAdapter(child: SizedBox(height: 110)),
         ],
       ),
       if (isPlaylist && _sortMode == _SortMode.az && _sorted.isNotEmpty)

@@ -26,10 +26,10 @@ class _PlayerContent extends StatefulWidget {
   State<_PlayerContent> createState() => _PlayerContentState();
 }
 
-/// WidgetsBindingObserver: pausa animaciones cuando la app está en segundo plano
-/// → ahorra batería y CPU mientras el usuario usa otras apps
+/// El ciclo de vida de las animaciones lo gobierna `TickerMode` en app.dart.
+/// Aquí solo se sincroniza el fondo con `isPlaying` (una única fuente de verdad).
 class _PlayerContentState extends State<_PlayerContent>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin {
   Color _colorA = const Color(0xFF1A0A2E);
   Color _colorB = const Color(0xFF0D0A20);
   Color _glowColor = const Color(0xFF6D28D9);
@@ -42,32 +42,20 @@ class _PlayerContentState extends State<_PlayerContent>
 
   late final AnimationController _bgCtrl;
   late final Animation<double> _bgAnim;
+  bool _bgPlaying = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _bgCtrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 6))
-          ..repeat(reverse: true);
+    _bgCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    );
     _bgAnim = CurvedAnimation(parent: _bgCtrl, curve: Curves.easeInOut);
-  }
-
-  /// Pausa animaciones cuando la app está en segundo plano
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden) {
-      if (_bgCtrl.isAnimating) _bgCtrl.stop();
-    } else if (state == AppLifecycleState.resumed) {
-      if (!_bgCtrl.isAnimating) _bgCtrl.repeat(reverse: true);
-    }
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _bgCtrl.dispose();
     _queueScrollCtrl.dispose();
     super.dispose();
@@ -94,13 +82,16 @@ class _PlayerContentState extends State<_PlayerContent>
     try {
       final art = await OnAudioQuery().queryArtwork(song.id, ArtworkType.AUDIO,
           format: ArtworkFormat.JPEG, size: 200);
+      // Si el usuario cambió de pista mientras se cargaba la carátula, este
+      // resultado ya no aplica: aplicarlo dejaría los colores de una pista fija.
+      if (!mounted || _lastSongId != song.id) return;
       if (art == null || art.isEmpty) {
         _fallback(song);
         return;
       }
       final palette = await PaletteGenerator.fromImageProvider(MemoryImage(art),
           size: const Size(200, 200), maximumColorCount: 8);
-      if (!mounted) return;
+      if (!mounted || _lastSongId != song.id) return;
       setState(() {
         _glowColor = palette.vibrantColor?.color ??
             palette.dominantColor?.color ??
@@ -114,8 +105,8 @@ class _PlayerContentState extends State<_PlayerContent>
   }
 
   void _fallback(SongModel song) {
+    if (!mounted || _lastSongId != song.id) return;
     final hue = ((song.albumId ?? song.id) * 47) % 360;
-    if (!mounted) return;
     setState(() {
       _colorA = HSLColor.fromAHSL(1, hue.toDouble(), 0.7, 0.15).toColor();
       _colorB = HSLColor.fromAHSL(1, (hue + 40) % 360, 0.6, 0.10).toColor();
@@ -133,6 +124,17 @@ class _PlayerContentState extends State<_PlayerContent>
         if (_lastSongId != song.id) {
           _lastSongId = song.id;
           _extractPalette(song);
+        }
+
+        final isPlaying =
+            context.select<AudioProvider, bool>((a) => a.isPlaying);
+        if (isPlaying != _bgPlaying) {
+          _bgPlaying = isPlaying;
+          if (isPlaying) {
+            if (!_bgCtrl.isAnimating) _bgCtrl.repeat(reverse: true);
+          } else {
+            _bgCtrl.stop();
+          }
         }
 
         return OrientationBuilder(
@@ -196,7 +198,7 @@ class _PlayerContentState extends State<_PlayerContent>
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(song.title ?? 'Pista desconocida',
+                      Text(song.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -298,9 +300,14 @@ class _PlayerContentState extends State<_PlayerContent>
                   return Selector<AudioProvider, VisualizerStyle>(
                     selector: (_, a) => a.animationStyle,
                     builder: (_, style, __) => VisualizerFactory(
+                      // La clave por pista fuerza un estado nuevo: ni el
+                      // visualizador ni su carátula pueden quedar "pegados" a
+                      // la canción anterior al cambiar varias veces de pista.
+                      key: ValueKey('visualizer-${song.id}'),
                       style: style,
                       isPlaying: isPlaying,
                       albumId: song.albumId,
+                      trackId: song.id,
                       glowColor: _glowColor,
                       paletteDominant: _colorA,
                       paletteMuted: _colorB,
@@ -354,9 +361,11 @@ class _PlayerContentState extends State<_PlayerContent>
                                 Selector<AudioProvider, VisualizerStyle>(
                               selector: (_, a) => a.animationStyle,
                               builder: (_, style, __) => VisualizerFactory(
+                                key: ValueKey('visualizer-${song.id}'),
                                 style: style,
                                 isPlaying: isPlaying,
                                 albumId: song.albumId,
+                                trackId: song.id,
                                 glowColor: _glowColor,
                                 paletteDominant: _colorA,
                                 paletteMuted: _colorB,
@@ -388,7 +397,7 @@ class _PlayerContentState extends State<_PlayerContent>
                 ]),
                 const Spacer(),
                 // Título fijo 1 línea
-                Text(song.title ?? 'Pista desconocida',
+                Text(song.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -467,6 +476,7 @@ class _PlayerContentState extends State<_PlayerContent>
                       width: 38,
                       height: 38,
                       child: QueryArtworkWidget(
+                        key: ValueKey('queue-art-${song.id}'),
                         id: song.id,
                         type: ArtworkType.AUDIO,
                         artworkFit: BoxFit.cover,
@@ -480,7 +490,7 @@ class _PlayerContentState extends State<_PlayerContent>
                       ),
                     ),
                   ),
-                  title: Text(song.title ?? '',
+                  title: Text(song.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -568,9 +578,10 @@ class _PlayerContentState extends State<_PlayerContent>
                     thumbColor: Colors.white,
                     overlayShape: SliderComponentShape.noOverlay,
                   ),
-                  child: Slider(
-                      value: progress.toDouble(),
-                      onChanged: (v) => audio.seekTo(v)),
+                  child: _ProgressSlider(
+                    progress: progress.toDouble(),
+                    onSeek: audio.seekTo,
+                  ),
                 ),
               ],
             );
@@ -803,10 +814,8 @@ class _PlayerContentState extends State<_PlayerContent>
                           color: AppTheme.onSurfaceVariant, fontSize: 11),
                     ),
                   ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showAnimationStyleSheet(context);
-                  },
+                  onTap: () => _closeSheetAndThen(
+                      ctx, () => _showAnimationStyleSheet(context)),
                 ),
                 // Ecualizador → abre app de sonido del sistema
                 ListTile(
@@ -816,10 +825,8 @@ class _PlayerContentState extends State<_PlayerContent>
                       style: TextStyle(
                           color: AppTheme.onSurface,
                           fontWeight: FontWeight.w600)),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _openSystemEqualizer(context);
-                  },
+                  onTap: () => _closeSheetAndThen(
+                      ctx, () => _openSystemEqualizer(context)),
                 ),
                 // Temporizador de sueño — funcional, igual que en Ajustes
                 ListTile(
@@ -840,11 +847,10 @@ class _PlayerContentState extends State<_PlayerContent>
                           fontSize: 11),
                     ),
                   ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showSleepTimerSheet(
-                        context, context.read<AudioProvider>());
-                  },
+                  onTap: () => _closeSheetAndThen(
+                      ctx,
+                      () => _showSleepTimerSheet(
+                          context, context.read<AudioProvider>())),
                 ),
                 // Ajustes
                 ListTile(
@@ -854,10 +860,11 @@ class _PlayerContentState extends State<_PlayerContent>
                       style: TextStyle(
                           color: AppTheme.onSurface,
                           fontWeight: FontWeight.w600)),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showComingSoon(context, 'Ajustes desde el reproductor');
-                  },
+                  onTap: () => _closeSheetAndThen(ctx, () {
+                    if (mounted) {
+                      _showComingSoon(context, 'Ajustes desde el reproductor');
+                    }
+                  }),
                 ),
                 const SizedBox(height: 16),
               ],
@@ -866,6 +873,16 @@ class _PlayerContentState extends State<_PlayerContent>
         );
       },
     );
+  }
+
+  /// Cierra la hoja actual y abre la siguiente en el frame posterior. Si se
+  /// hacía en el mismo tap, la nueva hoja aparecía aún bajo el gesto que cerraba
+  /// la anterior y se descartaba: parecía que el menú no respondía.
+  void _closeSheetAndThen(BuildContext sheetContext, VoidCallback next) {
+    Navigator.of(sheetContext).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) next();
+    });
   }
 
   Future<void> _openSystemEqualizer(BuildContext context) async {
@@ -878,6 +895,12 @@ class _PlayerContentState extends State<_PlayerContent>
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.surfaceContainerHigh,
+      // Sin isScrollControlled el sheet se limitaba a media pantalla y los
+      // estilos radiales 3-5 quedaban fuera de alcance.
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.9,
+      ),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => AnimationStyleSheet(audio: audio),
@@ -1016,6 +1039,35 @@ class _ActionBtn extends StatelessWidget {
                   color: color, fontSize: 9, fontWeight: FontWeight.w600)),
         ],
       ),
+    );
+  }
+}
+
+/// Slider con estado local de arrastre: mientras el dedo se mueve no se aplica
+/// ningún seek, así el thumb no "pelea" con el positionStream del reproductor.
+class _ProgressSlider extends StatefulWidget {
+  final double progress;
+  final ValueChanged<double> onSeek;
+
+  const _ProgressSlider({required this.progress, required this.onSeek});
+
+  @override
+  State<_ProgressSlider> createState() => _ProgressSliderState();
+}
+
+class _ProgressSliderState extends State<_ProgressSlider> {
+  double? _dragValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return Slider(
+      value: _dragValue ?? widget.progress,
+      onChangeStart: (_) => setState(() => _dragValue = widget.progress),
+      onChanged: (value) => setState(() => _dragValue = value),
+      onChangeEnd: (value) {
+        setState(() => _dragValue = null);
+        widget.onSeek(value);
+      },
     );
   }
 }

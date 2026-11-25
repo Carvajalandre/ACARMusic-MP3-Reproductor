@@ -1,11 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../../../theme/app_theme.dart';
 import '../../../library/library_provider.dart';
 
-class PermissionScreen extends StatelessWidget {
+class PermissionScreen extends StatefulWidget {
   const PermissionScreen({super.key});
+
+  @override
+  State<PermissionScreen> createState() => _PermissionScreenState();
+}
+
+class _PermissionScreenState extends State<PermissionScreen> {
+  bool _permanentlyDenied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStatus();
+  }
+
+  Future<void> _checkStatus() async {
+    final status = await Permission.audio.status;
+    if (!mounted) return;
+    setState(() => _permanentlyDenied = status.isPermanentlyDenied);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +51,7 @@ class PermissionScreen extends StatelessWidget {
               ),
               const SizedBox(height: 32),
               Text(
-                'Music Library Access',
+                'Acceso a tu biblioteca musical',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.manrope(
                   color: AppTheme.onSurface,
@@ -41,7 +61,9 @@ class PermissionScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                'Sonic Monolith needs permission to access the local music files on your device to play them.',
+                _permanentlyDenied
+                    ? 'El permiso está denegado permanentemente. Ábrelo en Ajustes del sistema para continuar.'
+                    : 'ACARMusic necesita permiso para leer los archivos de música de tu dispositivo y poder reproducirlos.',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.manrope(
                   color: AppTheme.onSurfaceVariant,
@@ -54,8 +76,15 @@ class PermissionScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: () {
-                    context.read<LibraryProvider>().requestPermissionAndLoad();
+                  onPressed: () async {
+                    if (_permanentlyDenied) {
+                      await openAppSettings();
+                      return;
+                    }
+                    await context
+                        .read<LibraryProvider>()
+                        .requestPermissionAndLoad();
+                    if (mounted) await _checkStatus();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primary,
@@ -65,7 +94,9 @@ class PermissionScreen extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    'Grant Permission',
+                    _permanentlyDenied
+                        ? 'Abrir ajustes del sistema'
+                        : 'Conceder permiso',
                     style: GoogleFonts.manrope(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
